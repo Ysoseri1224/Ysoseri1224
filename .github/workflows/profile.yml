@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install scc
+        run: |
+          mkdir -p "$RUNNER_TEMP/scc"
+          curl -sSfL https://github.com/boyter/scc/releases/download/v4.1.0/scc_Linux_x86_64.tar.gz | tar -xz -C "$RUNNER_TEMP/scc" scc
+          echo "$RUNNER_TEMP/scc" >> "$GITHUB_PATH"
+
+      # METRICS_TOKEN needs read access to private repos for their lines to be counted
       - run: python scripts/cards.py
         env:
           GITHUB_TOKEN: ${{ secrets.METRICS_TOKEN }}

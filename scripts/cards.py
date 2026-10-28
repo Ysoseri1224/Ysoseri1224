@@ -1,8 +1,11 @@
 """Draw GitHub-styled SVG cards (banner, languages, recently starred) in light and dark variants."""
 
+import base64
 import json
 import os
 import re
+import subprocess
+import tempfile
 import unicodedata
 import urllib.request
 from datetime import datetime, timezone
@@ -13,7 +16,11 @@ TOKEN = os.environ["GITHUB_TOKEN"]
 OUT_DIR = "assets"
 WIDTH = 830
 IGNORED_LANGUAGES = {"Jupyter Notebook"}
-LANGUAGE_LIMIT = 8
+SCC = os.environ.get("SCC", "scc")
+SCC_EXCLUDED_DIRS = ".git,node_modules,vendor,dist,build"
+# scc language names that differ from GitHub linguist's
+SCC_ALIASES = {"JSX": "JavaScript", "Powershell": "PowerShell", "Batch": "Batchfile", "Jupyter": "Jupyter Notebook"}
+TILE_COLUMNS = 5
 STAR_LIMIT = 4
 
 # Primer functional colors
@@ -51,11 +58,10 @@ BANNER = r"""
 QUERY = """
 query($login: String!, $stars: Int!) {
   user(login: $login) {
-    repositories(first: 100, ownerAffiliations: OWNER, isFork: false, privacy: PUBLIC) {
+    repositories(first: 100, ownerAffiliations: OWNER, isFork: false) {
       nodes {
-        languages(first: 20, orderBy: {field: SIZE, direction: DESC}) {
-          edges { size node { name color } }
-        }
+        nameWithOwner
+        languages(first: 20) { nodes { name color } }
       }
     }
     starredRepositories(first: $stars, orderBy: {field: STARRED_AT, direction: DESC}) {
@@ -192,48 +198,74 @@ def banner(t):
     )
 
 
-def aggregate_languages(repos):
+def git_env():
+    """Authenticate clones via an extra header so the token never appears in command arguments or errors."""
+    credentials = base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
+    return {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credentials}",
+    }
+
+
+def count_lines(repos):
+    """Shallow-clone each repo and count code lines with scc, keeping only languages GitHub detects in it.
+
+    Covers every repo the token can see, so private repos are included when the token has read access to them.
+    """
     totals, colors = {}, {}
-    for repo in repos:
-        for edge in repo["languages"]["edges"]:
-            name = edge["node"]["name"]
-            if name in IGNORED_LANGUAGES:
-                continue
-            totals[name] = totals.get(name, 0) + edge["size"]
-            colors[name] = edge["node"]["color"]
+    env = git_env()
+    with tempfile.TemporaryDirectory() as workdir:
+        for i, repo in enumerate(repos):
+            detected = {lang["name"]: lang["color"] for lang in repo["languages"]["nodes"]}
+            colors.update(detected)
+            path = os.path.join(workdir, str(i))
+            subprocess.run(
+                ["git", "clone", "--quiet", "--depth", "1", f"https://github.com/{repo['nameWithOwner']}.git", path],
+                check=True, env=env,
+            )
+            report = subprocess.run(
+                [SCC, "--no-min-gen", "--exclude-dir", SCC_EXCLUDED_DIRS, "--format", "json", path],
+                check=True, capture_output=True, text=True,
+            ).stdout
+            for entry in json.loads(report or "[]"):
+                name = SCC_ALIASES.get(entry["Name"], entry["Name"])
+                if name in detected and name not in IGNORED_LANGUAGES and entry["Code"]:
+                    totals[name] = totals.get(name, 0) + entry["Code"]
     ranked = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
-    total = sum(totals.values()) or 1
-    rows = [(name, size / total, colors[name]) for name, size in ranked[:LANGUAGE_LIMIT]]
-    rest = sum(size for _, size in ranked[LANGUAGE_LIMIT:])
-    if rest:
-        rows.append(("Other", rest / total, None))
-    return rows, len(ranked), len(repos)
+    return [(name, lines, colors.get(name)) for name, lines in ranked]
 
 
-def languages_card(rows, language_count, repo_count, t):
-    pad, columns, row_h = 16, 3, 26
-    bar_y, bar_w = 64, WIDTH - 2 * pad
-    body = [
-        f'<clipPath id="bar"><rect x="{pad}" y="{bar_y}" width="{bar_w}" height="8" rx="4"/></clipPath>',
-        '<g clip-path="url(#bar)">',
-    ]
-    x = pad
-    for name, share, color in rows:
-        w = share * bar_w
-        body.append(f'<rect x="{x:.2f}" y="{bar_y}" width="{w + 0.5:.2f}" height="8" fill="{color or t["other"]}"/>')
-        x += w
-    body.append("</g>")
+def readable(color, t):
+    """Lift language colors that would vanish against the dark canvas (e.g. PowerShell navy)."""
+    if not color or t is not THEMES["dark"]:
+        return color
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    if 0.2126 * r + 0.7152 * g + 0.0722 * b >= 70:
+        return color
+    return "#" + "".join(f"{round(c + (255 - c) * 0.45):02x}" for c in (r, g, b))
 
-    col_w = bar_w / columns
-    legend_y = bar_y + 36
-    for i, (name, share, color) in enumerate(rows):
-        cx = pad + (i % columns) * col_w
-        cy = legend_y + (i // columns) * row_h
-        body.append(f'<circle cx="{cx + 5}" cy="{cy - 4}" r="5" fill="{color or t["other"]}"/>')
-        body.append(text(cx + 18, cy, name, color=t["fg"], weight=600))
-        body.append(text(cx + 18 + text_width(name, 14) + 10, cy, f"{share * 100:.1f}%", color=t["muted"]))
-    height = legend_y + ((len(rows) - 1) // columns) * row_h + 22
-    aside = f"{language_count} languages across {repo_count} public repositories"
+
+def languages_card(rows, repo_count, t):
+    pad, gap, tile_h = 16, 12, 64
+    tile_w = (WIDTH - 2 * pad - (TILE_COLUMNS - 1) * gap) / TILE_COLUMNS
+    body = []
+    for i, (name, lines, color) in enumerate(rows):
+        x = pad + (i % TILE_COLUMNS) * (tile_w + gap)
+        y = 44 + pad + (i // TILE_COLUMNS) * (tile_h + gap)
+        body.append(f'<rect x="{x + 0.5:.1f}" y="{y + 0.5}" width="{tile_w - 1:.1f}" height="{tile_h - 1}" rx="6" fill="none" stroke="{t["border"]}"/>')
+        body.append(f'<circle cx="{x + 18}" cy="{y + 20}" r="5" fill="{readable(color, t) or t["other"]}"/>')
+        body.append(text(x + 30, y + 24, truncate(name, 12, tile_w - 42), size=12, color=t["muted"]))
+        body.append(
+            f'<text x="{x + 13}" y="{y + 50}" font-family="{SANS}" font-size="20" font-weight="600" fill="{t["fg"]}">'
+            f'{lines:,}<tspan dx="5" font-size="12" font-weight="400" fill="{t["muted"]}">lines</tspan></text>'
+        )
+    rows_count = (len(rows) + TILE_COLUMNS - 1) // TILE_COLUMNS
+    height = 44 + pad + rows_count * tile_h + (rows_count - 1) * gap + pad
+    total = sum(lines for _, lines, _ in rows)
+    aside = f"{total:,} lines of code across {repo_count} repositories"
     return svg(height, box(height, "Languages", "code", aside, t) + "".join(body))
 
 
@@ -257,7 +289,7 @@ def starred_card(edges, t):
         fy, fx = y + card_h - inner, x + inner
         lang = repo["primaryLanguage"]
         if lang:
-            body.append(f'<circle cx="{fx + 6}" cy="{fy - 4}" r="6" fill="{lang["color"] or t["other"]}"/>')
+            body.append(f'<circle cx="{fx + 6}" cy="{fy - 4}" r="6" fill="{readable(lang["color"], t) or t["other"]}"/>')
             body.append(text(fx + 17, fy, lang["name"], size=12, color=t["muted"]))
             fx += 17 + text_width(lang["name"], 12) + 16
         for name, count in (("star", repo["stargazerCount"]), ("fork", repo["forkCount"])):
@@ -271,13 +303,14 @@ def starred_card(edges, t):
 
 def main():
     data = graphql(QUERY, {"login": USER, "stars": STAR_LIMIT})["user"]
-    rows, language_count, repo_count = aggregate_languages(data["repositories"]["nodes"])
+    repos = data["repositories"]["nodes"]
+    rows = count_lines(repos)
     stars = data["starredRepositories"]["edges"]
     os.makedirs(OUT_DIR, exist_ok=True)
     for theme, t in THEMES.items():
         outputs = {
             "banner": banner(t),
-            "languages": languages_card(rows, language_count, repo_count, t),
+            "languages": languages_card(rows, len(repos), t),
             "starred": starred_card(stars, t),
         }
         for name, content in outputs.items():
