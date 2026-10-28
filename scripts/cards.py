@@ -20,7 +20,6 @@ SCC = os.environ.get("SCC", "scc")
 SCC_EXCLUDED_DIRS = ".git,node_modules,vendor,dist,build"
 # scc language names that differ from GitHub linguist's
 SCC_ALIASES = {"JSX": "JavaScript", "Powershell": "PowerShell", "Batch": "Batchfile", "Jupyter": "Jupyter Notebook"}
-TILE_COLUMNS = 5
 STAR_LIMIT = 4
 
 # Primer functional colors
@@ -249,21 +248,27 @@ def readable(color, t):
 
 
 def languages_card(rows, repo_count, t):
-    pad, gap, tile_h = 16, 12, 64
-    tile_w = (WIDTH - 2 * pad - (TILE_COLUMNS - 1) * gap) / TILE_COLUMNS
+    """Two-column horizontal bar chart, ranked top-to-bottom then left-to-right; bars are linear in code lines."""
+    pad, gutter, row_h, bar_h = 16, 32, 26, 10
+    label_w, number_w = 112, 64
+    col_w = (WIDTH - 2 * pad - gutter) / 2
+    track_w = col_w - label_w - number_w
+    per_column = (len(rows) + 1) // 2
+    top = 44 + pad
+    longest = max((lines for _, lines, _ in rows), default=1)
     body = []
     for i, (name, lines, color) in enumerate(rows):
-        x = pad + (i % TILE_COLUMNS) * (tile_w + gap)
-        y = 44 + pad + (i // TILE_COLUMNS) * (tile_h + gap)
-        body.append(f'<rect x="{x + 0.5:.1f}" y="{y + 0.5}" width="{tile_w - 1:.1f}" height="{tile_h - 1}" rx="6" fill="none" stroke="{t["border"]}"/>')
-        body.append(f'<circle cx="{x + 18}" cy="{y + 20}" r="5" fill="{readable(color, t) or t["other"]}"/>')
-        body.append(text(x + 30, y + 24, truncate(name, 12, tile_w - 42), size=12, color=t["muted"]))
-        body.append(
-            f'<text x="{x + 13}" y="{y + 50}" font-family="{SANS}" font-size="20" font-weight="600" fill="{t["fg"]}">'
-            f'{lines:,}<tspan dx="5" font-size="12" font-weight="400" fill="{t["muted"]}">lines</tspan></text>'
-        )
-    rows_count = (len(rows) + TILE_COLUMNS - 1) // TILE_COLUMNS
-    height = 44 + pad + rows_count * tile_h + (rows_count - 1) * gap + pad
+        x = pad + (i // per_column) * (col_w + gutter)
+        cy = top + (i % per_column) * row_h + row_h / 2
+        track_x = x + label_w
+        fill = readable(color, t) or t["other"]
+        body.append(f'<circle cx="{x + 5}" cy="{cy}" r="5" fill="{fill}"/>')
+        body.append(text(x + 18, cy + 5, truncate(name, 14, label_w - 24), color=t["fg"]))
+        body.append(f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{track_w:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{t["subtle"]}"/>')
+        width = max(bar_h, lines / longest * track_w)
+        body.append(f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{width:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{fill}"/>')
+        body.append(text(round(x + col_w, 1), cy + 5, f"{lines:,}", color=t["fg"], weight=600, anchor="end"))
+    height = top + per_column * row_h + pad
     total = sum(lines for _, lines, _ in rows)
     aside = f"{total:,} lines of code across {repo_count} repositories"
     return svg(height, box(height, "Languages", "code", aside, t) + "".join(body))
