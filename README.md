@@ -12,7 +12,12 @@ University of Auckland · Master of Information Technology
 
 ## Metrics
 
-<img alt="Languages, recently starred repositories and recent activity" src="https://raw.githubusercontent.com/Ysoseri1224/Ysoseri1224/main/metrics/metrics.svg">
+<img alt="Languages and recently starred repositories" src="https://raw.githubusercontent.com/Ysoseri1224/Ysoseri1224/main/metrics/metrics.svg">
+
+## Recent activity
+
+<!--START_SECTION:activity-->
+<!--END_SECTION:activity-->
 
 ## Contributions
 
