@@ -210,11 +210,13 @@ def git_env():
 
 
 def count_lines(repos):
-    """Shallow-clone each repo and count code lines with scc, keeping only languages GitHub detects in it.
+    """Shallow-clone each repo and count code lines with scc.
 
-    Covers every repo the token can see, so private repos are included when the token has read access to them.
+    Languages GitHub detects in a repo are ranked individually; everything else scc counts (docs, data,
+    config, type declarations, ...) is pooled into "Others". Covers every repo the token can see, so
+    private repos are included when the token has read access to them.
     """
-    totals, colors = {}, {}
+    totals, others, colors = {}, {}, {}
     env = git_env()
     with tempfile.TemporaryDirectory() as workdir:
         for i, repo in enumerate(repos):
@@ -226,15 +228,20 @@ def count_lines(repos):
                 check=True, env=env,
             )
             report = subprocess.run(
-                [SCC, "--no-min-gen", "--exclude-dir", SCC_EXCLUDED_DIRS, "--format", "json", path],
+                # Clones only hold tracked files, so ignore files would only hide code that was committed anyway
+                [SCC, "--no-min-gen", "--no-gitignore", "--no-ignore", "--exclude-dir", SCC_EXCLUDED_DIRS,
+                 "--format", "json", path],
                 check=True, capture_output=True, text=True,
             ).stdout
             for entry in json.loads(report or "[]"):
                 name = SCC_ALIASES.get(entry["Name"], entry["Name"])
-                if name in detected and name not in IGNORED_LANGUAGES and entry["Code"]:
-                    totals[name] = totals.get(name, 0) + entry["Code"]
+                if name in IGNORED_LANGUAGES or not entry["Code"]:
+                    continue
+                bucket = totals if name in detected else others
+                bucket[name] = bucket.get(name, 0) + entry["Code"]
     ranked = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
-    return [(name, lines, colors.get(name)) for name, lines in ranked]
+    others_ranked = sorted(others.items(), key=lambda kv: kv[1], reverse=True)
+    return [(name, lines, colors.get(name)) for name, lines in ranked], others_ranked
 
 
 def readable(color, t):
@@ -247,8 +254,13 @@ def readable(color, t):
     return "#" + "".join(f"{round(c + (255 - c) * 0.45):02x}" for c in (r, g, b))
 
 
-def languages_card(rows, repo_count, t):
-    """Bar chart on one linear scale: bars too long for a column span the full width, the rest share two columns."""
+def languages_card(rows, others, repo_count, t):
+    """Bar chart on one linear scale set by the top language.
+
+    Bars too long for a column span the full width, the rest share two columns, and the pooled
+    "Others" row always spans the full width at the bottom; if it outruns the scale it is drawn
+    with a break mark instead of shrinking every other bar.
+    """
     pad, gutter, row_h, bar_h = 16, 32, 26, 10
     label_w, number_w = 112, 64
     col_w = (WIDTH - 2 * pad - gutter) / 2
@@ -263,13 +275,22 @@ def languages_card(rows, repo_count, t):
     def bar_row(x, cy, width, name, lines, color):
         fill = readable(color, t) or t["other"]
         track_x, track_w = x + label_w, width - label_w - number_w
-        return (
+        bar_w = min(track_w, max(bar_h, lines * scale))
+        row = (
             f'<circle cx="{x + 5}" cy="{cy}" r="5" fill="{fill}"/>'
             + text(x + 18, cy + 5, truncate(name, 14, label_w - 24), color=t["fg"])
             + f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{track_w:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{t["subtle"]}"/>'
-            + f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{max(bar_h, lines * scale):.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{fill}"/>'
+            + f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{bar_w:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{fill}"/>'
             + text(round(x + width, 1), cy + 5, f"{lines:,}", color=t["fg"], weight=600, anchor="end")
         )
+        if lines * scale > track_w:
+            # Axis break: the bar is longer than the scale allows
+            bx = track_x + track_w * 0.85
+            row += "".join(
+                f'<line x1="{bx + dx:.1f}" y1="{cy + bar_h}" x2="{bx + dx + 6:.1f}" y2="{cy - bar_h}" stroke="{t["canvas"]}" stroke-width="2.5"/>'
+                for dx in (0, 6)
+            )
+        return row
 
     body = [
         bar_row(pad, top + i * row_h + row_h / 2, WIDTH - 2 * pad, name, lines, color)
@@ -279,9 +300,21 @@ def languages_card(rows, repo_count, t):
     for i, (name, lines, color) in enumerate(rest):
         x = pad + (i // per_column) * (col_w + gutter)
         body.append(bar_row(x, columns_top + (i % per_column) * row_h + row_h / 2, col_w, name, lines, color))
-    height = columns_top + per_column * row_h + pad
-    total = sum(lines for _, lines, _ in rows)
-    aside = f"{total:,} lines of code across {repo_count} repositories"
+    height = columns_top + per_column * row_h
+    if others:
+        others_total = sum(lines for _, lines in others)
+        height += 10
+        body.append(f'<line x1="{pad}" y1="{height + 0.5}" x2="{WIDTH - pad}" y2="{height + 0.5}" stroke="{t["border"]}"/>')
+        height += 6
+        body.append(bar_row(pad, height + row_h / 2, WIDTH - 2 * pad, "Others", others_total, None))
+        detail = " · ".join(f"{name} {lines:,}" for name, lines in others[:5])
+        if len(others) > 5:
+            detail += f" · {len(others) - 5} more"
+        body.append(text(pad + 18, height + row_h + 12, truncate(detail, 12, WIDTH - 2 * pad - 18), size=12, color=t["muted"]))
+        height += row_h + 18
+    height += pad
+    total = sum(lines for _, lines, _ in rows) + sum(lines for _, lines in others)
+    aside = f"{total:,} lines across {repo_count} repositories"
     return svg(height, box(height, "Languages", "code", aside, t) + "".join(body))
 
 
@@ -320,13 +353,13 @@ def starred_card(edges, t):
 def main():
     data = graphql(QUERY, {"login": USER, "stars": STAR_LIMIT})["user"]
     repos = data["repositories"]["nodes"]
-    rows = count_lines(repos)
+    rows, others = count_lines(repos)
     stars = data["starredRepositories"]["edges"]
     os.makedirs(OUT_DIR, exist_ok=True)
     for theme, t in THEMES.items():
         outputs = {
             "banner": banner(t),
-            "languages": languages_card(rows, len(repos), t),
+            "languages": languages_card(rows, others, len(repos), t),
             "starred": starred_card(stars, t),
         }
         for name, content in outputs.items():
