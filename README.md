@@ -17,6 +17,11 @@ University of Auckland · Master of Information Technology
 ## Recent activity
 
 <!--START_SECTION:activity-->
+- Pushed to [Ysoseri1224/RunCat365](https://github.com/Ysoseri1224/RunCat365) · 2026-10-22
+- Forked [runcat-dev/RunCat365](https://github.com/runcat-dev/RunCat365) · 2026-10-22
+- Forked [stanford-oval/storm](https://github.com/stanford-oval/storm) · 2026-10-20
+- Forked [morluto/rea](https://github.com/morluto/rea) · 2026-10-18
+- Pushed to [Ysoseri1224/Blog](https://github.com/Ysoseri1224/Blog) ×2 · 2026-10-16
 <!--END_SECTION:activity-->
 
 ## Contributions

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/activity.yml]
+    paths: [.github/workflows/activity.yml, scripts/activity.py]
 
 permissions:
   contents: write
@@ -16,10 +16,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: jamesgeorge007/github-activity-readme@v0.5.0
+      - uses: actions/checkout@v5
+
+      # GITHUB_TOKEN is scoped to this repo, so only truly public activity is visible
+      - run: python scripts/activity.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          COMMIT_MSG: "chore: update recent activity"
-          MAX_LINES: 5
+          GH_USER: ${{ github.repository_owner }}
+
+      - run: |
+          git diff --quiet README.md && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: update recent activity"
+          git pull --rebase
+          git push
