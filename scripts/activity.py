@@ -37,8 +37,6 @@ def describe(event):
         return f"Pushed to {link(repo)}"
     if kind == "CreateEvent" and payload.get("ref_type") == "repository":
         return f"Created {link(repo)}"
-    if kind == "ForkEvent":
-        return f"Forked {link(repo)}"
     if kind == "PublicEvent":
         return f"Open-sourced {link(repo)}"
     if kind == "ReleaseEvent":
