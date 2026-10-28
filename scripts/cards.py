@@ -248,27 +248,38 @@ def readable(color, t):
 
 
 def languages_card(rows, repo_count, t):
-    """Two-column horizontal bar chart, ranked top-to-bottom then left-to-right; bars are linear in code lines."""
+    """Bar chart on one linear scale: bars too long for a column span the full width, the rest share two columns."""
     pad, gutter, row_h, bar_h = 16, 32, 26, 10
     label_w, number_w = 112, 64
     col_w = (WIDTH - 2 * pad - gutter) / 2
-    track_w = col_w - label_w - number_w
-    per_column = (len(rows) + 1) // 2
+    wide_track = WIDTH - 2 * pad - label_w - number_w
+    col_track = col_w - label_w - number_w
+    scale = wide_track / max((lines for _, lines, _ in rows), default=1)
+    spanning = sum(1 for _, lines, _ in rows if lines * scale > col_track)
+    rest = rows[spanning:]
+    per_column = (len(rest) + 1) // 2
     top = 44 + pad
-    longest = max((lines for _, lines, _ in rows), default=1)
-    body = []
-    for i, (name, lines, color) in enumerate(rows):
-        x = pad + (i // per_column) * (col_w + gutter)
-        cy = top + (i % per_column) * row_h + row_h / 2
-        track_x = x + label_w
+
+    def bar_row(x, cy, width, name, lines, color):
         fill = readable(color, t) or t["other"]
-        body.append(f'<circle cx="{x + 5}" cy="{cy}" r="5" fill="{fill}"/>')
-        body.append(text(x + 18, cy + 5, truncate(name, 14, label_w - 24), color=t["fg"]))
-        body.append(f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{track_w:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{t["subtle"]}"/>')
-        width = max(bar_h, lines / longest * track_w)
-        body.append(f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{width:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{fill}"/>')
-        body.append(text(round(x + col_w, 1), cy + 5, f"{lines:,}", color=t["fg"], weight=600, anchor="end"))
-    height = top + per_column * row_h + pad
+        track_x, track_w = x + label_w, width - label_w - number_w
+        return (
+            f'<circle cx="{x + 5}" cy="{cy}" r="5" fill="{fill}"/>'
+            + text(x + 18, cy + 5, truncate(name, 14, label_w - 24), color=t["fg"])
+            + f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{track_w:.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{t["subtle"]}"/>'
+            + f'<rect x="{track_x:.1f}" y="{cy - bar_h / 2}" width="{max(bar_h, lines * scale):.1f}" height="{bar_h}" rx="{bar_h / 2}" fill="{fill}"/>'
+            + text(round(x + width, 1), cy + 5, f"{lines:,}", color=t["fg"], weight=600, anchor="end")
+        )
+
+    body = [
+        bar_row(pad, top + i * row_h + row_h / 2, WIDTH - 2 * pad, name, lines, color)
+        for i, (name, lines, color) in enumerate(rows[:spanning])
+    ]
+    columns_top = top + spanning * row_h
+    for i, (name, lines, color) in enumerate(rest):
+        x = pad + (i // per_column) * (col_w + gutter)
+        body.append(bar_row(x, columns_top + (i % per_column) * row_h + row_h / 2, col_w, name, lines, color))
+    height = columns_top + per_column * row_h + pad
     total = sum(lines for _, lines, _ in rows)
     aside = f"{total:,} lines of code across {repo_count} repositories"
     return svg(height, box(height, "Languages", "code", aside, t) + "".join(body))
