@@ -42,7 +42,8 @@ My site: [ysoseri.us](https://ysoseri.us)
 
 <!--START_SECTION:activity-->
 - Pushed to [Ysoseri1224/luckyrong](https://github.com/Ysoseri1224/luckyrong) · 2026-11-07
+- Pushed to [Ysoseri1224/timeline](https://github.com/Ysoseri1224/timeline) · 2026-11-07
+- Pushed to [Ysoseri1224/luckyrong](https://github.com/Ysoseri1224/luckyrong) · 2026-11-07
 - Pushed to [Ysoseri1224/RunCat365](https://github.com/Ysoseri1224/RunCat365) · 2026-10-22
 - Pushed to [Ysoseri1224/Blog](https://github.com/Ysoseri1224/Blog) ×2 · 2026-10-16
-- Pushed to [Ysoseri1224/your-device-soul](https://github.com/Ysoseri1224/your-device-soul) ×5 · 2026-10-12
 <!--END_SECTION:activity-->
